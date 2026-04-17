@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="popup.css" />
+  <title>Tutorica Forms</title>
+</head>
+<body>
+  <main>
+    <h1>Tutorica Forms</h1>
+    <p class="hint">Modo simple para pruebas locales de formularios.</p>
+
+    <label class="toggle-row" for="enabled">
+      <span>Activar en Google Forms</span>
+      <input id="enabled" type="checkbox" />
+    </label>
+
+    <label for="backendBaseUrl">URL del backend</label>
+    <input id="backendBaseUrl" type="url" placeholder="http://localhost:5000" />
+    <p class="hint tiny">Usa solo protocolo + host + puerto. Ejemplo: http://localhost:5000</p>
+
+    <label for="submissionCount">Cantidad de envios</label>
+    <input id="submissionCount" type="number" min="1" max="20" />
+
+    <label class="inline-checkbox compact" for="requireConfirmation">
+      <input id="requireConfirmation" type="checkbox" />
+      <span>Pedir confirmacion antes de enviar</span>
+    </label>
+
+    <label class="inline-checkbox compact" for="multiPageMode">
+      <input id="multiPageMode" type="checkbox" />
+      <span>Formulario con varias paginas</span>
+    </label>
+
+    <label class="inline-checkbox compact" for="smartProfileMode">
+      <input id="smartProfileMode" type="checkbox" />
+      <span>Relleno inteligente 80/20</span>
+    </label>
+
+    <label for="smartProfileType">Perfil de respuesta</label>
+    <select id="smartProfileType">
+      <option value="favorable">Favorable (recomendado)</option>
+      <option value="intermedio">Intermedio</option>
+      <option value="desfavorable">Desfavorable</option>
+      <option value="auto">Auto</option>
+    </select>
+
+    <label for="specialQuestionKeyword">Pregunta especial (palabra clave, opcional)</label>
+    <input id="specialQuestionKeyword" type="text" placeholder="ejemplo: satisfaccion" />
+
+    <label for="specialQuestionPreferred">Respuesta preferida (opcional)</label>
+    <input id="specialQuestionPreferred" type="text" placeholder="ejemplo: De acuerdo" />
+
+    <label for="apiKey">API Key (opcional)</label>
+    <input id="apiKey" type="password" placeholder="x-api-key" autocomplete="off" />
+    <p class="hint tiny">Solo se usa si activaste QA_API_KEY en el backend.</p>
+
+    <div class="actions-row">
+      <button id="saveBtn" type="button">Guardar</button>
+      <button id="testConnectionBtn" class="secondary" type="button">Probar backend</button>
+      <button id="refreshDiagBtn" class="secondary" type="button">Actualizar estado</button>
+    </div>
+    <p id="status" role="status"></p>
+
+    <section class="diag-box">
+      <h2>Ultima ejecucion</h2>
+      <p id="diagJob" class="diag-line">Job: -</p>
+      <p id="diagStatus" class="diag-line">Estado: -</p>
+      <p id="diagError" class="diag-line">Error: -</p>
+      <p id="diagUpdatedAt" class="diag-line">Actualizado: -</p>
+    </section>
+  </main>
+
+  <script src="popup.js"></script>
+</body>
+</html>

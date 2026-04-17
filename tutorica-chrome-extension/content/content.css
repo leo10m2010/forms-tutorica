@@ -1,0 +1,70 @@
+#borang-qa-pill {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  z-index: 999999;
+  padding: 8px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.2);
+}
+
+#borang-qa-pill.is-on {
+  background: #0f766e;
+  color: #ecfeff;
+}
+
+#borang-qa-pill.is-off {
+  background: #9f1239;
+  color: #fff1f2;
+}
+
+#borang-qa-status {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  max-width: 380px;
+  z-index: 999999;
+  padding: 12px 14px;
+  border-radius: 10px;
+  color: #ffffff;
+  font-size: 13px;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+}
+
+#borang-qa-status.is-ok {
+  background: #1d4ed8;
+}
+
+#borang-qa-status.is-error {
+  background: #b91c1c;
+}
+
+#borang-qa-actions {
+  position: fixed;
+  top: 52px;
+  right: 12px;
+  z-index: 999998;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+#borang-qa-actions button {
+  border: none;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #0f172a;
+  color: #f8fafc;
+  font-size: 12px;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  cursor: pointer;
+}
+
+#borang-qa-actions button:hover {
+  background: #1e293b;
+}

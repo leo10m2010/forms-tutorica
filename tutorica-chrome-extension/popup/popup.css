@@ -1,0 +1,148 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  width: 340px;
+  background: linear-gradient(145deg, #f8fafc, #eef2ff);
+  color: #0f172a;
+  font-family: 'Segoe UI', Tahoma, sans-serif;
+}
+
+main {
+  padding: 14px;
+}
+
+h1 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.hint {
+  margin: 6px 0 14px;
+  color: #475569;
+  font-size: 12px;
+}
+
+label {
+  display: block;
+  margin: 10px 0 4px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #334155;
+}
+
+input[type='url'],
+input[type='password'],
+input[type='text'],
+select,
+input[type='number'] {
+  width: 100%;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 8px;
+  background: #ffffff;
+}
+
+.toggle-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin: 8px 0 12px;
+}
+
+.inline-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.inline-checkbox.compact {
+  margin-top: 8px;
+}
+
+.hint.tiny {
+  margin: 8px 0 0;
+  font-size: 11px;
+}
+
+code {
+  font-family: Consolas, 'Courier New', monospace;
+  font-size: 11px;
+  background: #e2e8f0;
+  padding: 1px 4px;
+  border-radius: 4px;
+}
+
+button {
+  width: 100%;
+  margin-top: 14px;
+  border: none;
+  border-radius: 10px;
+  padding: 10px;
+  background: #0f766e;
+  color: #ecfeff;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.actions-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.actions-row button {
+  margin-top: 14px;
+  padding: 9px 6px;
+  font-size: 12px;
+}
+
+button.secondary {
+  background: #334155;
+}
+
+button.secondary:hover {
+  background: #475569;
+}
+
+button:hover {
+  background: #0d9488;
+}
+
+#status {
+  min-height: 18px;
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: #1d4ed8;
+}
+
+#status.ok {
+  color: #0f766e;
+}
+
+#status.error {
+  color: #b91c1c;
+}
+
+.diag-box {
+  margin-top: 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  background: #fff;
+  padding: 8px;
+}
+
+.diag-box h2 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: #334155;
+}
+
+.diag-line {
+  margin: 0 0 4px;
+  font-size: 11px;
+  color: #334155;
+}
