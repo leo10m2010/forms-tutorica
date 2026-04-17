@@ -1,0 +1,29 @@
+{
+  "name": "borang",
+  "version": "1.1.0",
+  "description": "",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server",
+    "server": "nodemon --ignore temp/qa-jobs.json --ignore temp/*.json server",
+    "client": "npm --prefix ./client run dev",
+    "dev": "concurrently \"npm run server\" \"npm run client\"",
+    "install-client": "npm --prefix ./client install",
+    "build-client": "npm --prefix ./client run build",
+    "qa:smoke": "node qa-smoke-test.js",
+    "test:qa-api": "node --test tests/qa-api.test.js"
+  },
+  "author": "Adib Zaini",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.5.1",
+    "compression": "^1.7.4",
+    "express": "^4.18.2",
+    "firebase-admin": "^11.11.0",
+    "js-beautify": "^1.14.9"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "nodemon": "^3.0.1"
+  }
+}

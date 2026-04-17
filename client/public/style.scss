@@ -1,0 +1,63 @@
+$bg-color: black;
+$text-color: white;
+$primary-color: #219ebc;
+$secondary-color: #8ecae6;
+
+body {
+  margin: 10px 50px;
+  background-color: $bg-color;
+  color: $text-color;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+
+  a {
+    color: yellow;
+  }
+
+  #main-div {
+    display: flex;
+    justify-content: center;
+    width: 100%;
+    #inner-div {
+      h1 {
+        text-align: center;
+      }
+
+      .red-text {
+        color: red;
+      }
+
+      #url-div {
+        font-size: 1.2rem;
+
+        // Input URL
+        #url {
+          width: 50vw;
+          height: 2rem;
+          font-size: 1rem;
+          border: none;
+
+          &:hover {
+            outline: solid $primary-color;
+          }
+        }
+
+        // Button
+        #get-form {
+          height: 2rem;
+          font-size: 1.2rem;
+
+          &:hover {
+            background-color: $secondary-color;
+            cursor: pointer;
+          }
+        }
+      }
+    }
+  }
+}
+
+@media only screen and(max-width: 599px) {
+  iframe {
+    width: 90vw;
+  }
+}
