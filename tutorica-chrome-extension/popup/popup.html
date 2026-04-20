@@ -22,7 +22,7 @@
     <p class="hint tiny">Usa solo protocolo + host + puerto. Ejemplo: http://localhost:5000</p>
 
     <label for="submissionCount">Cantidad de envios</label>
-    <input id="submissionCount" type="number" min="1" max="20" />
+    <input id="submissionCount" type="number" min="1" max="250" />
 
     <label class="inline-checkbox compact" for="requireConfirmation">
       <input id="requireConfirmation" type="checkbox" />
@@ -63,6 +63,14 @@
       <button id="refreshDiagBtn" class="secondary" type="button">Actualizar estado</button>
     </div>
     <p id="status" role="status"></p>
+
+    <section class="diag-box">
+      <h2>Configuracion backend</h2>
+      <p id="backendMax" class="diag-line">Max por corrida: -</p>
+      <p id="backendGender" class="diag-line">Genero (rango): -</p>
+      <p id="backendAge" class="diag-line">Edad (pesos): -</p>
+      <p id="backendFreq" class="diag-line">Frecuencia (pesos): -</p>
+    </section>
 
     <section class="diag-box">
       <h2>Ultima ejecucion</h2>

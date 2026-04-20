@@ -31,16 +31,30 @@ const QA_ALLOWED_HOSTS = (process.env.QA_ALLOWED_HOSTS || 'docs.google.com')
   .filter(Boolean);
 // LIMIT: ajusta este valor para cambiar el maximo por corrida (extension + API QA)
 const QA_MAX_SUBMISSIONS_PER_JOB = Number(
-  process.env.QA_MAX_SUBMISSIONS_PER_JOB || 20
+  process.env.QA_MAX_SUBMISSIONS_PER_JOB || 250
 );
 const QA_MIN_DELAY_MS = Number(process.env.QA_MIN_DELAY_MS || 500);
 const QA_MAX_DELAY_MS = Number(process.env.QA_MAX_DELAY_MS || 60_000);
 const QA_MAX_JITTER_MS = Number(process.env.QA_MAX_JITTER_MS || 5_000);
 const QA_REQUEST_TIMEOUT_MS = Number(process.env.QA_REQUEST_TIMEOUT_MS || 20_000);
+const QA_JOBS_LIST_DEFAULT_LIMIT = Number(process.env.QA_JOBS_LIST_DEFAULT_LIMIT || 20);
+const QA_JOBS_LIST_MAX_LIMIT = Number(process.env.QA_JOBS_LIST_MAX_LIMIT || 200);
+const QA_GENDER_SHARE_MIN = Number(process.env.QA_GENDER_SHARE_MIN || 0.4);
+const QA_GENDER_SHARE_MAX = Number(process.env.QA_GENDER_SHARE_MAX || 0.6);
+const QA_AGE_SHARE_18_25 = Number(process.env.QA_AGE_SHARE_18_25 || 0.35);
+const QA_AGE_SHARE_26_35 = Number(process.env.QA_AGE_SHARE_26_35 || 0.4);
+const QA_AGE_SHARE_36_45 = Number(process.env.QA_AGE_SHARE_36_45 || 0.2);
+const QA_AGE_SHARE_46_PLUS = Number(process.env.QA_AGE_SHARE_46_PLUS || 0.05);
+const QA_FREQ_SHARE_WEEKLY = Number(process.env.QA_FREQ_SHARE_WEEKLY || 0.15);
+const QA_FREQ_SHARE_BIWEEKLY = Number(process.env.QA_FREQ_SHARE_BIWEEKLY || 0.35);
+const QA_FREQ_SHARE_MONTHLY = Number(process.env.QA_FREQ_SHARE_MONTHLY || 0.35);
+const QA_FREQ_SHARE_OCCASIONAL = Number(process.env.QA_FREQ_SHARE_OCCASIONAL || 0.15);
+const QA_DISTRIBUTION_CONFIG = resolveQaDistributionConfig();
 
 const formDataStore = {};
 const qaJobStore = {};
 const compatStoredForms = {};
+const qaSmartRuntimeStore = new Map();
 const requestLimitStore = new Map();
 const qaCleanupTimers = new Map();
 
@@ -142,10 +156,21 @@ app.get('/api/qa/config', (req, res) => {
     },
     limits: {
       maxSubmissionsPerJob: QA_MAX_SUBMISSIONS_PER_JOB,
+      defaultJobsListLimit: clamp(Math.floor(QA_JOBS_LIST_DEFAULT_LIMIT), 1, QA_JOBS_LIST_MAX_LIMIT),
+      maxJobsListLimit: QA_JOBS_LIST_MAX_LIMIT,
       minDelayMs: QA_MIN_DELAY_MS,
       maxDelayMs: QA_MAX_DELAY_MS,
       maxJitterMs: QA_MAX_JITTER_MS,
       requestTimeoutMs: QA_REQUEST_TIMEOUT_MS,
+    },
+    distribution: {
+      genderShareRange: {
+        min: QA_DISTRIBUTION_CONFIG.gender.min,
+        max: QA_DISTRIBUTION_CONFIG.gender.max,
+      },
+      ageShares: QA_DISTRIBUTION_CONFIG.age,
+      purchaseFrequencyShares: QA_DISTRIBUTION_CONFIG.frequency,
+      maxSubmissionsPerJob: QA_MAX_SUBMISSIONS_PER_JOB,
     },
   });
 });
@@ -166,8 +191,8 @@ app.get('/api/qa/jobs/:id', (req, res) => {
 app.get('/api/qa/jobs', (req, res) => {
   const requestedLimit = Number(req.query.limit);
   const safeLimit = Number.isFinite(requestedLimit)
-    ? clamp(Math.floor(requestedLimit), 1, 2)
-    : 2;
+    ? clamp(Math.floor(requestedLimit), 1, QA_JOBS_LIST_MAX_LIMIT)
+    : clamp(Math.floor(QA_JOBS_LIST_DEFAULT_LIMIT), 1, QA_JOBS_LIST_MAX_LIMIT);
   const statusFilter =
     typeof req.query.status === 'string' && req.query.status.trim()
       ? req.query.status.trim()
@@ -217,6 +242,7 @@ app.delete('/api/qa/jobs', (req, res) => {
 
   qaCleanupTimers.forEach((timer) => clearTimeout(timer));
   qaCleanupTimers.clear();
+  qaSmartRuntimeStore.clear();
 
   Object.keys(qaJobStore).forEach((id) => {
     delete qaJobStore[id];
@@ -240,6 +266,7 @@ app.delete('/api/qa/jobs/:id', (req, res) => {
   job.status = 'cancelled';
   job.cancelRequested = true;
   job.updatedAt = new Date().toISOString();
+  qaSmartRuntimeStore.delete(req.params.id);
   scheduleQaJobCleanup(req.params.id);
   persistQaJobsSoon();
   res.json({
@@ -290,6 +317,7 @@ app.post('/api/qa/submit', async (req, res) => {
       ? clamp(requestedJitterMs, 0, QA_MAX_JITTER_MS)
       : 0;
 
+    const sanitizedSmartProfile = sanitizeSmartProfile(smartProfile);
     const jobId = randomUUID();
     qaJobStore[jobId] = {
       id: jobId,
@@ -301,7 +329,9 @@ app.post('/api/qa/submit', async (req, res) => {
       delayMs: safeDelayMs,
       jitterMs: safeJitterMs,
       autoRandomizeText: Boolean(autoRandomizeText),
-      smartProfile: sanitizeSmartProfile(smartProfile),
+      smartProfile: sanitizedSmartProfile,
+      distributionPlan: null,
+      recentAppliedRules: [],
       status: 'queued',
       cancelRequested: false,
       sent: 0,
@@ -315,6 +345,9 @@ app.post('/api/qa/submit', async (req, res) => {
     };
 
     trimQaStoreIfNeeded();
+    const smartRuntime = buildSmartProfileRuntime(sanitizedSmartProfile, safeCount);
+    qaSmartRuntimeStore.set(jobId, smartRuntime);
+    qaJobStore[jobId].distributionPlan = summarizeSmartRuntimePlan(smartRuntime);
     persistQaJobsSoon();
 
     runQaJob(jobId, payload);
@@ -399,6 +432,8 @@ app.post('/api/forms/submit', async (req, res) => {
       delayMs: QA_MIN_DELAY_MS,
       jitterMs: 0,
       autoRandomizeText: false,
+      distributionPlan: null,
+      recentAppliedRules: [],
       status: 'queued',
       cancelRequested: false,
       sent: 0,
@@ -412,6 +447,9 @@ app.post('/api/forms/submit', async (req, res) => {
     };
 
     trimQaStoreIfNeeded();
+    const smartRuntime = buildSmartProfileRuntime(null, safeCount);
+    qaSmartRuntimeStore.set(jobId, smartRuntime);
+    qaJobStore[jobId].distributionPlan = summarizeSmartRuntimePlan(smartRuntime);
     persistQaJobsSoon();
 
     runQaJob(jobId, payload);
@@ -594,6 +632,7 @@ async function runQaJob(jobId, payload) {
   if (!job) {
     return;
   }
+  const smartRuntime = qaSmartRuntimeStore.get(jobId) || null;
 
   job.status = 'running';
   job.updatedAt = new Date().toISOString();
@@ -607,12 +646,19 @@ async function runQaJob(jobId, payload) {
     }
 
     try {
+      if (smartRuntime) {
+        smartRuntime.currentAttempt = i + 1;
+      }
       const attemptPayload = buildAttemptPayload(
         payload,
         i,
         job.autoRandomizeText,
-        job.smartProfile
+        job.smartProfile,
+        smartRuntime
       );
+      if (smartRuntime && Array.isArray(smartRuntime.audit)) {
+        job.recentAppliedRules = smartRuntime.audit.slice(-40);
+      }
       const encodedPayload = toUrlEncodedPayload(attemptPayload);
 
       job.latestResult = {
@@ -682,6 +728,7 @@ async function runQaJob(jobId, payload) {
   job.finishedAt = new Date().toISOString();
   job.updatedAt = new Date().toISOString();
   scheduleQaJobCleanup(jobId);
+  qaSmartRuntimeStore.delete(jobId);
   persistQaJobsSoon();
 }
 
@@ -742,7 +789,7 @@ function toUrlEncodedPayload(payload) {
   return params.toString();
 }
 
-function buildAttemptPayload(payload, attemptIndex, autoRandomizeText, smartProfile) {
+function buildAttemptPayload(payload, attemptIndex, autoRandomizeText, smartProfile, smartRuntime) {
   const attemptPayload = {};
 
   for (const [key, rawValue] of Object.entries(payload || {})) {
@@ -764,7 +811,7 @@ function buildAttemptPayload(payload, attemptIndex, autoRandomizeText, smartProf
     let value = applyRandomTokens(String(rawValue), attemptIndex);
 
     if (smartProfile?.enabled && key.startsWith('entry.')) {
-      value = applySmartProfileValue(key, value, smartProfile);
+      value = applySmartProfileValue(key, value, smartProfile, smartRuntime);
     }
 
     if (autoRandomizeText && shouldAutoRandomizeField(key, value)) {
@@ -777,9 +824,12 @@ function buildAttemptPayload(payload, attemptIndex, autoRandomizeText, smartProf
   return attemptPayload;
 }
 
-function applySmartProfileValue(key, value, smartProfile) {
+function applySmartProfileValue(key, value, smartProfile, smartRuntime) {
   const entryKey = String(key || '');
   const currentValue = String(value || '');
+  const entryOptions = Array.isArray(smartProfile?.entryMeta?.[entryKey]?.options)
+    ? smartProfile.entryMeta[entryKey].options
+    : [];
 
   if (
     smartProfile.specialEntryKey &&
@@ -789,11 +839,22 @@ function applySmartProfileValue(key, value, smartProfile) {
     return String(smartProfile.specialPreferred);
   }
 
+  const fromRuntime = pickSmartOptionByRuntime(entryKey, smartRuntime, currentValue);
+  if (fromRuntime) {
+    return fromRuntime;
+  }
+
   if (looksLikeGenderValue(currentValue)) {
+    if (entryOptions.length) {
+      return pickAlternativeOption(entryOptions, currentValue);
+    }
     return pickGenderValue(currentValue);
   }
 
   if (looksLikeAgeValue(currentValue)) {
+    if (entryOptions.length) {
+      return pickAlternativeOption(entryOptions, currentValue);
+    }
     return pickAgeLikeValue(currentValue);
   }
 
@@ -804,6 +865,20 @@ function applySmartProfileValue(key, value, smartProfile) {
   }
 
   return currentValue;
+}
+
+function pickAlternativeOption(options, fallbackValue) {
+  const source = Array.from(
+    new Set((options || []).map((option) => String(option || '').trim()).filter(Boolean))
+  );
+  if (!source.length) {
+    return String(fallbackValue || '');
+  }
+
+  const normalizedFallback = normalizeForMatch(fallbackValue);
+  const alternatives = source.filter((value) => normalizeForMatch(value) !== normalizedFallback);
+  const pool = alternatives.length ? alternatives : source;
+  return pool[Math.floor(Math.random() * pool.length)] || String(fallbackValue || '');
 }
 
 function applyRandomTokens(value, attemptIndex) {
@@ -837,7 +912,529 @@ function sanitizeSmartProfile(raw) {
       ? String(input.specialEntryKey)
       : '',
     specialPreferred: String(input.specialPreferred || '').trim().slice(0, 180),
+    entryMeta: sanitizeSmartEntryMeta(input.entryMeta),
   };
+}
+
+function sanitizeSmartEntryMeta(raw) {
+  const output = {};
+  if (!raw || typeof raw !== 'object') {
+    return output;
+  }
+
+  for (const [entryKey, entryMeta] of Object.entries(raw)) {
+    if (!/^entry\.\d+$/.test(String(entryKey || ''))) {
+      continue;
+    }
+
+    const question = String(entryMeta?.question || '')
+      .trim()
+      .slice(0, 240);
+    const options = Array.from(
+      new Set(
+        Array.isArray(entryMeta?.options)
+          ? entryMeta.options
+              .map((option) => String(option || '').trim())
+              .filter(Boolean)
+              .slice(0, 24)
+          : []
+      )
+    );
+
+    if (!question && !options.length) {
+      continue;
+    }
+
+    output[entryKey] = {
+      question,
+      options,
+    };
+  }
+
+  return output;
+}
+
+function resolveQaDistributionConfig() {
+  const genderMin = clampFraction(QA_GENDER_SHARE_MIN, 0.4);
+  const genderMax = clampFraction(QA_GENDER_SHARE_MAX, 0.6);
+  const minShare = Math.min(genderMin, genderMax);
+  const maxShare = Math.max(genderMin, genderMax);
+
+  const age = normalizeShares(
+    {
+      age_18_25: QA_AGE_SHARE_18_25,
+      age_26_35: QA_AGE_SHARE_26_35,
+      age_36_45: QA_AGE_SHARE_36_45,
+      age_46_plus: QA_AGE_SHARE_46_PLUS,
+    },
+    {
+      age_18_25: 0.35,
+      age_26_35: 0.4,
+      age_36_45: 0.2,
+      age_46_plus: 0.05,
+    }
+  );
+
+  const frequency = normalizeShares(
+    {
+      weekly: QA_FREQ_SHARE_WEEKLY,
+      biweekly: QA_FREQ_SHARE_BIWEEKLY,
+      monthly: QA_FREQ_SHARE_MONTHLY,
+      occasional: QA_FREQ_SHARE_OCCASIONAL,
+    },
+    {
+      weekly: 0.15,
+      biweekly: 0.35,
+      monthly: 0.35,
+      occasional: 0.15,
+    }
+  );
+
+  return {
+    gender: {
+      min: minShare,
+      max: maxShare,
+    },
+    age,
+    frequency,
+  };
+}
+
+function clampFraction(value, fallback) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return fallback;
+  }
+
+  return clamp(numeric, 0, 1);
+}
+
+function normalizeShares(rawShares, fallbackShares) {
+  const output = {};
+  let sum = 0;
+
+  for (const [key, value] of Object.entries(rawShares || {})) {
+    const numeric = Number(value);
+    const safe = Number.isFinite(numeric) && numeric >= 0 ? numeric : 0;
+    output[key] = safe;
+    sum += safe;
+  }
+
+  if (sum <= 0) {
+    return { ...fallbackShares };
+  }
+
+  for (const key of Object.keys(output)) {
+    output[key] = output[key] / sum;
+  }
+
+  return output;
+}
+
+function buildSmartProfileRuntime(smartProfile, totalAttempts) {
+  if (!smartProfile?.enabled || !Number.isFinite(totalAttempts) || totalAttempts <= 0) {
+    return null;
+  }
+
+  const entryMeta = smartProfile.entryMeta || {};
+  const runtime = {
+    totalAttempts,
+    entries: {},
+    audit: [],
+    maxAudit: 120,
+  };
+
+  for (const [entryKey, meta] of Object.entries(entryMeta)) {
+    const config = buildEntryRuntimeConfig(meta, totalAttempts);
+    if (config) {
+      runtime.entries[entryKey] = config;
+    }
+  }
+
+  return runtime;
+}
+
+function summarizeSmartRuntimePlan(runtime) {
+  if (!runtime?.entries) {
+    return null;
+  }
+
+  const entries = {};
+  for (const [entryKey, config] of Object.entries(runtime.entries)) {
+    entries[entryKey] = {
+      category: config.category || 'generic',
+      targets: { ...(config.targets || {}) },
+      groups: Object.fromEntries(
+        Object.entries(config.groups || {}).map(([groupKey, values]) => [groupKey, values.length])
+      ),
+    };
+  }
+
+  return {
+    totalAttempts: runtime.totalAttempts,
+    entries,
+  };
+}
+
+function recordSmartRule(runtime, detail) {
+  if (!runtime || !Array.isArray(runtime.audit)) {
+    return;
+  }
+
+  const item = {
+    attempt: Number(runtime.currentAttempt || 0) || null,
+    entryKey: String(detail?.entryKey || ''),
+    category: String(detail?.category || 'generic'),
+    group: String(detail?.group || ''),
+    value: String(detail?.value || ''),
+  };
+
+  runtime.audit.push(item);
+  const max = Number(runtime.maxAudit || 120);
+  if (runtime.audit.length > max) {
+    runtime.audit.splice(0, runtime.audit.length - max);
+  }
+}
+
+function buildEntryRuntimeConfig(meta, totalAttempts) {
+  const options = Array.from(new Set((meta?.options || []).map((value) => String(value || '').trim())))
+    .filter(Boolean);
+  if (!options.length) {
+    return null;
+  }
+
+  const normalizedQuestion = normalizeForMatch(meta?.question || '');
+  const normalizedOptions = options.map((value) => normalizeForMatch(value));
+
+  const genderGroups = buildGenderGroups(options, normalizedOptions, normalizedQuestion);
+  if (genderGroups) {
+    const femaleShare =
+      QA_DISTRIBUTION_CONFIG.gender.min +
+      Math.random() * (QA_DISTRIBUTION_CONFIG.gender.max - QA_DISTRIBUTION_CONFIG.gender.min);
+    const maleShare = 1 - femaleShare;
+    const genderWeights = selectWeightsForPresentGroups(
+      {
+        female: femaleShare,
+        male: maleShare,
+        other: 0,
+      },
+      genderGroups
+    );
+    return {
+      category: 'gender',
+      groups: genderGroups,
+      targets: allocateTargets(totalAttempts, genderWeights),
+      used: { female: 0, male: 0, other: 0 },
+    };
+  }
+
+  const ageGroups = buildAgeGroups(options, normalizedOptions, normalizedQuestion);
+  if (ageGroups) {
+    const ageWeights = selectWeightsForPresentGroups(QA_DISTRIBUTION_CONFIG.age, ageGroups);
+    return {
+      category: 'age',
+      groups: ageGroups,
+      targets: allocateTargets(totalAttempts, ageWeights),
+      used: { age_18_25: 0, age_26_35: 0, age_36_45: 0, age_46_plus: 0, other: 0 },
+    };
+  }
+
+  const frequencyGroups = buildFrequencyGroups(options, normalizedOptions, normalizedQuestion);
+  if (frequencyGroups) {
+    const frequencyWeights = selectWeightsForPresentGroups(
+      QA_DISTRIBUTION_CONFIG.frequency,
+      frequencyGroups
+    );
+    return {
+      category: 'frequency',
+      groups: frequencyGroups,
+      targets: allocateTargets(totalAttempts, frequencyWeights),
+      used: { weekly: 0, biweekly: 0, monthly: 0, occasional: 0, other: 0 },
+    };
+  }
+
+  if (looksLikePersonalityPrompt(normalizedQuestion, normalizedOptions)) {
+    const weights = {};
+    options.forEach((_, index) => {
+      weights[String(index)] = 1 / options.length;
+    });
+
+    const groups = {};
+    options.forEach((value, index) => {
+      groups[String(index)] = [value];
+    });
+
+    const used = {};
+    options.forEach((_, index) => {
+      used[String(index)] = 0;
+    });
+
+    return {
+      category: 'personality',
+      groups,
+      targets: allocateTargets(totalAttempts, weights),
+      used,
+    };
+  }
+
+  return null;
+}
+
+function pickSmartOptionByRuntime(entryKey, smartRuntime, fallbackValue) {
+  if (!smartRuntime?.entries || !entryKey) {
+    return '';
+  }
+
+  const config = smartRuntime.entries[entryKey];
+  if (!config?.groups || !config?.targets || !config?.used) {
+    return '';
+  }
+
+  const keys = Object.keys(config.groups).filter((groupKey) => {
+    const list = config.groups[groupKey];
+    return Array.isArray(list) && list.length > 0;
+  });
+  if (!keys.length) {
+    return '';
+  }
+
+  const preferredKeys = keys
+    .map((groupKey) => {
+      const target = Number(config.targets[groupKey] || 0);
+      const used = Number(config.used[groupKey] || 0);
+      return {
+        groupKey,
+        deficit: target - used,
+      };
+    })
+    .filter((item) => item.deficit > 0)
+    .sort((a, b) => b.deficit - a.deficit);
+
+  const candidateKeys = preferredKeys.length
+    ? preferredKeys.map((item) => item.groupKey)
+    : keys;
+  const pickedGroup = candidateKeys[Math.floor(Math.random() * candidateKeys.length)];
+  if (!pickedGroup) {
+    return '';
+  }
+
+  const options = config.groups[pickedGroup];
+  const normalizedFallback = normalizeForMatch(fallbackValue);
+  const alternatives = options.filter((value) => normalizeForMatch(value) !== normalizedFallback);
+  const source = alternatives.length ? alternatives : options;
+  if (!source.length) {
+    return '';
+  }
+
+  const chosen = source[Math.floor(Math.random() * source.length)];
+  config.used[pickedGroup] = Number(config.used[pickedGroup] || 0) + 1;
+  recordSmartRule(smartRuntime, {
+    entryKey,
+    category: config.category || 'generic',
+    group: pickedGroup,
+    value: chosen,
+  });
+  return chosen;
+}
+
+function allocateTargets(total, weights) {
+  const entries = Object.entries(weights || {}).filter(([, weight]) => Number(weight) > 0);
+  if (!entries.length || total <= 0) {
+    return {};
+  }
+
+  const totalWeight = entries.reduce((sum, [, weight]) => sum + Number(weight), 0);
+  const bases = [];
+  let assigned = 0;
+
+  for (const [key, weight] of entries) {
+    const exact = (total * Number(weight)) / totalWeight;
+    const floorValue = Math.floor(exact);
+    bases.push({ key, count: floorValue, remainder: exact - floorValue });
+    assigned += floorValue;
+  }
+
+  let remaining = total - assigned;
+  bases.sort((a, b) => b.remainder - a.remainder);
+  let cursor = 0;
+  while (remaining > 0 && bases.length) {
+    bases[cursor % bases.length].count += 1;
+    cursor += 1;
+    remaining -= 1;
+  }
+
+  const targets = {};
+  for (const item of bases) {
+    targets[item.key] = item.count;
+  }
+  return targets;
+}
+
+function selectWeightsForPresentGroups(baseWeights, groups) {
+  const presentKeys = Object.keys(groups || {}).filter((key) =>
+    Array.isArray(groups[key]) ? groups[key].length > 0 : false
+  );
+  if (!presentKeys.length) {
+    return {};
+  }
+
+  const selected = {};
+  let sum = 0;
+  for (const key of presentKeys) {
+    const value = Number(baseWeights?.[key] || 0);
+    if (value > 0) {
+      selected[key] = value;
+      sum += value;
+    }
+  }
+
+  if (sum <= 0) {
+    const uniform = 1 / presentKeys.length;
+    const output = {};
+    for (const key of presentKeys) {
+      output[key] = uniform;
+    }
+    return output;
+  }
+
+  const normalized = {};
+  for (const [key, value] of Object.entries(selected)) {
+    normalized[key] = value / sum;
+  }
+  return normalized;
+}
+
+function buildGenderGroups(options, normalizedOptions, normalizedQuestion) {
+  const promptLooksGender =
+    /\bgenero\b|\bsexo\b|\bgender\b|\bsex\b|identidad de genero/.test(normalizedQuestion);
+  const groups = { male: [], female: [], other: [] };
+
+  for (let i = 0; i < options.length; i++) {
+    const option = options[i];
+    const text = normalizedOptions[i];
+    if (/masculino|male|hombre/.test(text)) {
+      groups.male.push(option);
+      continue;
+    }
+    if (/femenino|female|mujer/.test(text)) {
+      groups.female.push(option);
+      continue;
+    }
+    if (/otro|other|prefiero no/.test(text)) {
+      groups.other.push(option);
+    }
+  }
+
+  if (groups.male.length && groups.female.length) {
+    return groups;
+  }
+
+  if (promptLooksGender && (groups.male.length || groups.female.length || groups.other.length)) {
+    return groups;
+  }
+
+  return null;
+}
+
+function buildAgeGroups(options, normalizedOptions, normalizedQuestion) {
+  const promptLooksAge = /\bedad\b|\bage\b|rango de edad|grupo de edad/.test(normalizedQuestion);
+  const groups = {
+    age_18_25: [],
+    age_26_35: [],
+    age_36_45: [],
+    age_46_plus: [],
+    other: [],
+  };
+
+  for (let i = 0; i < options.length; i++) {
+    const bucket = classifyAgeBucket(options[i], normalizedOptions[i]);
+    if (bucket) {
+      groups[bucket].push(options[i]);
+    } else {
+      groups.other.push(options[i]);
+    }
+  }
+
+  const filled =
+    groups.age_18_25.length +
+    groups.age_26_35.length +
+    groups.age_36_45.length +
+    groups.age_46_plus.length;
+  if (filled >= 2 || (promptLooksAge && filled >= 1)) {
+    return groups;
+  }
+
+  return null;
+}
+
+function classifyAgeBucket(original, normalized) {
+  const text = normalized || normalizeForMatch(original);
+  const numericParts = Array.from(text.matchAll(/\d{1,2}/g)).map((item) => Number(item[0]));
+  const min = numericParts.length ? Math.min(...numericParts) : Number.NaN;
+  const max = numericParts.length ? Math.max(...numericParts) : Number.NaN;
+
+  if (/\b46\b.*(mas|a mas|\+)|\b50\+|\b60\+|\b65\+/.test(text)) {
+    return 'age_46_plus';
+  }
+
+  if (Number.isFinite(min) && Number.isFinite(max)) {
+    if (max <= 25) return 'age_18_25';
+    if (min >= 26 && max <= 35) return 'age_26_35';
+    if (min >= 36 && max <= 45) return 'age_36_45';
+    if (min >= 46) return 'age_46_plus';
+  }
+
+  return null;
+}
+
+function buildFrequencyGroups(options, normalizedOptions, normalizedQuestion) {
+  const promptLooksFrequency = /frecuencia|frequency|cada cuanto/.test(normalizedQuestion);
+  const groups = {
+    weekly: [],
+    biweekly: [],
+    monthly: [],
+    occasional: [],
+    other: [],
+  };
+
+  for (let i = 0; i < options.length; i++) {
+    const text = normalizedOptions[i];
+    if (/semanal|weekly/.test(text)) {
+      groups.weekly.push(options[i]);
+      continue;
+    }
+    if (/quincenal|fortnight|biweekly/.test(text)) {
+      groups.biweekly.push(options[i]);
+      continue;
+    }
+    if (/mensual|monthly/.test(text)) {
+      groups.monthly.push(options[i]);
+      continue;
+    }
+    if (/ocasional|ocasionalmente|eventual|rarely|de vez en cuando/.test(text)) {
+      groups.occasional.push(options[i]);
+      continue;
+    }
+    groups.other.push(options[i]);
+  }
+
+  const filled =
+    groups.weekly.length +
+    groups.biweekly.length +
+    groups.monthly.length +
+    groups.occasional.length;
+  if (filled >= 2 || (promptLooksFrequency && filled >= 1)) {
+    return groups;
+  }
+
+  return null;
+}
+
+function looksLikePersonalityPrompt(normalizedQuestion, normalizedOptions) {
+  const joined = `${normalizedQuestion} ${(normalizedOptions || []).join(' ')}`.trim();
+  return /personalidad|personality|temperamento|caracter|introvert|extrovert|mbti|eneagrama|enneagram|big five/.test(
+    joined
+  );
 }
 
 function normalizeProfileType(value) {
@@ -1177,6 +1774,7 @@ function scheduleQaJobCleanup(jobId) {
     }
 
     delete qaJobStore[jobId];
+    qaSmartRuntimeStore.delete(jobId);
     persistQaJobsSoon();
   }, QA_FINISHED_JOB_TTL_MS);
 

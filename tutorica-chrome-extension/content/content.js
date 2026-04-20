@@ -19,7 +19,7 @@ const DEFAULT_SETTINGS = {
   compatApiMode: false,
 };
 // LIMITE: ajusta este valor para limitar maximo desde la extension.
-const MAX_UI_SUBMISSIONS = 20;
+const MAX_UI_SUBMISSIONS = 250;
 
 let settings = { ...DEFAULT_SETTINGS };
 let csvRows = [];
@@ -156,27 +156,26 @@ async function onFormSubmit(event) {
 }
 
 async function onDocumentClick(event) {
-  const target = event.target;
-  if (!(target instanceof Element)) {
+  const target = resolveEventElementTarget(event);
+  if (!target) {
+    return;
+  }
+
+  const isSubmit = isGoogleFormsSubmitTrigger(target);
+  if (isSubmit) {
+    const form = target.closest('form') || currentForm || document.querySelector('form');
+    await startQaRun(form, event);
     return;
   }
 
   settings = await loadSettings();
-
-  const isSubmit = isGoogleFormsSubmitTrigger(target);
-  if (!isSubmit) {
-    if (settings.multiPageMode && isGoogleFormsNextTrigger(target)) {
+  if (settings.multiPageMode && isGoogleFormsNextTrigger(target)) {
       const now = Date.now();
       if (now - lastMultiPageHintAt > 2500) {
         lastMultiPageHintAt = now;
         showStatus('Pagina siguiente detectada. QA se ejecuta en el ultimo paso.', false);
       }
-    }
-    return;
   }
-
-  const form = target.closest('form') || currentForm || document.querySelector('form');
-  await startQaRun(form, event);
 }
 
 async function onDocumentKeyDown(event) {
@@ -184,8 +183,8 @@ async function onDocumentKeyDown(event) {
     return;
   }
 
-  const target = event.target;
-  if (!(target instanceof Element)) {
+  const target = resolveEventElementTarget(event);
+  if (!target) {
     return;
   }
 
@@ -211,6 +210,14 @@ async function onDocumentKeyDown(event) {
 }
 
 async function startQaRun(form, event) {
+  if (event) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (typeof event.stopImmediatePropagation === 'function') {
+      event.stopImmediatePropagation();
+    }
+  }
+
   settings = await loadSettings();
   if (!settings.enabled) {
     return;
@@ -234,14 +241,6 @@ async function startQaRun(form, event) {
   if (isQaRunStarting) {
     showStatus('La ejecucion QA ya se esta iniciando...', true);
     return;
-  }
-
-  if (event) {
-    event.preventDefault();
-    event.stopPropagation();
-    if (typeof event.stopImmediatePropagation === 'function') {
-      event.stopImmediatePropagation();
-    }
   }
 
   isQaRunStarting = true;
@@ -276,7 +275,12 @@ async function startQaRun(form, event) {
     payload = applyCsvRowIfAvailable(payload);
     payload = applySmartProfilePayload(payload, form, settings);
     const specialEntryKey = resolveSpecialEntryKey(form, settings.specialQuestionKeyword);
-    const smartProfile = buildSmartProfileConfig(settings, specialEntryKey);
+    const smartProfile = buildSmartProfileConfig(
+      settings,
+      specialEntryKey,
+      collectEntryOptions(form),
+      collectQuestionTextByEntry(form)
+    );
     const formUrl = form.action;
 
     if (!formUrl) {
@@ -748,6 +752,14 @@ function applySmartProfilePayload(payload, form, runtimeSettings) {
       continue;
     }
 
+    if (looksLikePersonalityField(questionText, value, options)) {
+      const picked = pickPersonalityValue(options, value);
+      if (picked) {
+        output[key] = picked;
+      }
+      continue;
+    }
+
     const currentScore = resolveLikertScore(value);
     const hasLikertOptions = options.some((option) => resolveLikertScore(option.value) > 0);
     if (currentScore > 0 || hasLikertOptions) {
@@ -762,12 +774,49 @@ function applySmartProfilePayload(payload, form, runtimeSettings) {
   return output;
 }
 
-function buildSmartProfileConfig(runtimeSettings, specialEntryKey) {
+function buildSmartProfileConfig(runtimeSettings, specialEntryKey, optionsByEntry, questionByEntry) {
+  const entryMeta = {};
+  if (optionsByEntry instanceof Map || questionByEntry instanceof Map) {
+    const keys = new Set([
+      ...Array.from(optionsByEntry instanceof Map ? optionsByEntry.keys() : []),
+      ...Array.from(questionByEntry instanceof Map ? questionByEntry.keys() : []),
+    ]);
+
+    for (const entryKey of keys) {
+      if (!/^entry\.\d+$/.test(entryKey || '')) {
+        continue;
+      }
+
+      const question = String(
+        questionByEntry instanceof Map ? questionByEntry.get(entryKey) || '' : ''
+      )
+        .trim()
+        .slice(0, 240);
+      const options = Array.from(
+        new Set(
+          (optionsByEntry instanceof Map ? optionsByEntry.get(entryKey) || [] : [])
+            .map((item) => String(item?.value || '').trim())
+            .filter(Boolean)
+        )
+      ).slice(0, 24);
+
+      if (!question && !options.length) {
+        continue;
+      }
+
+      entryMeta[entryKey] = {
+        question,
+        options,
+      };
+    }
+  }
+
   return {
     enabled: Boolean(runtimeSettings?.smartProfileMode),
     type: resolveSmartProfile(runtimeSettings?.smartProfileType),
     specialEntryKey: specialEntryKey || '',
     specialPreferred: String(runtimeSettings?.specialQuestionPreferred || '').trim(),
+    entryMeta,
   };
 }
 
@@ -952,23 +1001,34 @@ function looksLikeGenderField(questionText, value, options) {
   return (
     joined.includes('genero') ||
     joined.includes('sexo') ||
+    joined.includes('gender') ||
+    joined.includes('sex') ||
     joined.includes('male') ||
     joined.includes('female') ||
+    joined.includes('hombre') ||
+    joined.includes('mujer') ||
     joined.includes('masculino') ||
-    joined.includes('femenino')
+    joined.includes('femenino') ||
+    joined.includes('identidad de genero')
   );
 }
 
 function pickGenderValue(options, fallbackValue) {
-  const values = (options || []).map((option) => option.value).filter(Boolean);
+  const values = Array.from(
+    new Set((options || []).map((option) => String(option.value || '').trim()).filter(Boolean))
+  );
   if (!values.length) {
     return fallbackValue;
   }
 
+  const current = normalizeText(fallbackValue);
+  const pool = values.filter((value) => normalizeText(value) !== current);
+  const source = pool.length ? pool : values;
+
   const categorized = {
-    male: values.filter((value) => /masculino|male|hombre/i.test(value)),
-    female: values.filter((value) => /femenino|female|mujer/i.test(value)),
-    other: values.filter((value) => /otro|other|prefiero no/i.test(value)),
+    male: source.filter((value) => /masculino|male|hombre/i.test(value)),
+    female: source.filter((value) => /femenino|female|mujer/i.test(value)),
+    other: source.filter((value) => /otro|other|prefiero no/i.test(value)),
   };
 
   const roll = Math.random();
@@ -982,7 +1042,7 @@ function pickGenderValue(options, fallbackValue) {
     return categorized.other[Math.floor(Math.random() * categorized.other.length)];
   }
 
-  return values[Math.floor(Math.random() * values.length)] || fallbackValue;
+  return source[Math.floor(Math.random() * source.length)] || fallbackValue;
 }
 
 function looksLikeAgeField(questionText, value, options) {
@@ -992,22 +1052,84 @@ function looksLikeAgeField(questionText, value, options) {
 
   return (
     joined.includes('edad') ||
+    joined.includes('rango de edad') ||
+    joined.includes('grupo de edad') ||
     joined.includes('age') ||
+    joined.includes('years old') ||
+    joined.includes('anos') ||
+    joined.includes('anios') ||
     /\b\d{1,2}\s*-\s*\d{1,2}\b/.test(joined) ||
+    /\b\d{1,2}\s*(a|to)\s*\d{1,2}\b/.test(joined) ||
     /\b(18|20|25|30|35|40|45|50|55|60)\b/.test(joined)
   );
 }
 
+function looksLikePersonalityField(questionText, value, options) {
+  const joined = normalizeText(
+    `${questionText || ''} ${value || ''} ${(options || []).map((opt) => opt.value).join(' ')}`
+  );
+
+  return (
+    joined.includes('personalidad') ||
+    joined.includes('personality') ||
+    joined.includes('temperamento') ||
+    joined.includes('caracter') ||
+    joined.includes('introvert') ||
+    joined.includes('extrovert') ||
+    joined.includes('mbti') ||
+    joined.includes('eneagrama') ||
+    joined.includes('enneagram') ||
+    joined.includes('big five')
+  );
+}
+
+function pickPersonalityValue(options, fallbackValue) {
+  const values = Array.from(
+    new Set(
+      (options || [])
+        .map((option) => String(option.value || '').trim())
+        .filter((value) => value && !/^seleccione|select/i.test(value))
+    )
+  );
+
+  if (values.length) {
+    const current = normalizeText(fallbackValue);
+    const pool = values.filter((value) => normalizeText(value) !== current);
+    const source = pool.length ? pool : values;
+    return source[Math.floor(Math.random() * source.length)];
+  }
+
+  const fallback = String(fallbackValue || '').trim();
+  if (!fallback) {
+    return fallbackValue;
+  }
+
+  const splitBy = fallback.split(/\s*[,/|]\s*/).map((part) => part.trim()).filter(Boolean);
+  if (splitBy.length > 1) {
+    return splitBy[Math.floor(Math.random() * splitBy.length)];
+  }
+
+  return fallbackValue;
+}
+
 function pickRandomOptionValue(options, fallbackValue) {
-  const values = (options || [])
-    .map((option) => String(option.value || '').trim())
-    .filter((value) => value && !/^seleccione|select/i.test(value));
+  const values = Array.from(
+    new Set(
+      (options || [])
+        .map((option) => String(option.value || '').trim())
+        .filter((value) => value && !/^seleccione|select/i.test(value))
+    )
+  );
 
   if (!values.length) {
     return fallbackValue;
   }
 
-  return values[Math.floor(Math.random() * values.length)];
+  const current = normalizeText(fallbackValue);
+  const pool = values.filter((value) => normalizeText(value) !== current);
+  const source = pool.length ? pool : values;
+
+  return source[Math.floor(Math.random() * source.length)];
 }
 
 function findBestOptionValue(options, targetText) {
@@ -1033,6 +1155,19 @@ function normalizeText(value) {
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function resolveEventElementTarget(event) {
+  const target = event?.target;
+  if (target instanceof Element) {
+    return target;
+  }
+
+  if (target && target.nodeType === Node.TEXT_NODE) {
+    return target.parentElement;
+  }
+
+  return null;
 }
 
 function parseCsvRows(csvText) {
